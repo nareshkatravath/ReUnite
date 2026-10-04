@@ -1,0 +1,11 @@
+{
+  "name": "Remix ReuniteApp",
+  "description": "Free public community directory to help reconnect lost and found persons with instant photo reporting, GPS location tagging, and directory search.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
