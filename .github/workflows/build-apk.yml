@@ -24,8 +24,15 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Accept Android SDK Licenses
+        run: |
+          echo "Using preinstalled ANDROID_HOME=${ANDROID_HOME}"
+          SDK_MANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDK_MANAGER" ]; then
+            yes | "$SDK_MANAGER" --licenses >/dev/null || true
+          fi
+          mkdir -p "${ANDROID_HOME}/licenses"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e" >> "${ANDROID_HOME}/licenses/android-sdk-license"
 
       - name: Install dependencies and sync Capacitor
         run: |
