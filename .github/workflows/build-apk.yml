@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -47,10 +50,23 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Prepare APK for download
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk ReuniteApp-debug.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ReuniteApp-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: ReuniteApp-debug.apk
+
+      - name: Publish Direct APK Download (GitHub Release)
+        uses: softprops/action-gh-release@v2
+        continue-on-error: true
+        with:
+          tag_name: debug-latest
+          name: ReuniteApp Debug APK (Latest)
+          prerelease: true
+          make_latest: true
+          files: ReuniteApp-debug.apk
