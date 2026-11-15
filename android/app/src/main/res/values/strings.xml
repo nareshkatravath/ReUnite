@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ReuniteApp</string>
+    <string name="title_activity_main">ReuniteApp</string>
+    <string name="package_name">org.reuniteapp.directory</string>
+    <string name="custom_url_scheme">org.reuniteapp.directory</string>
+</resources>

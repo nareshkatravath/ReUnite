@@ -1,17 +1,21 @@
 import { PersonReport, SightingNote } from '../types';
 import { INITIAL_REPORTS } from '../data/initialReports';
 
-const STORAGE_KEY = 'reunite_app_reports_v1';
+const LEGACY_STORAGE_KEY = 'reunite_app_reports_v1';
+const STORAGE_KEY = 'reunite_app_reports_v2';
 
 export function getStoredReports(): PersonReport[] {
   try {
+    if (localStorage.getItem(LEGACY_STORAGE_KEY) !== null) {
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+    }
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_REPORTS));
       return INITIAL_REPORTS;
     }
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length === 0) {
+    if (!Array.isArray(parsed)) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_REPORTS));
       return INITIAL_REPORTS;
     }
@@ -27,6 +31,15 @@ export function saveReports(reports: PersonReport[]): void {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
   } catch (e) {
     console.error('Failed to save reports:', e);
+  }
+}
+
+export function clearAllReports(): void {
+  try {
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+  } catch (e) {
+    console.error('Failed to clear reports:', e);
   }
 }
 

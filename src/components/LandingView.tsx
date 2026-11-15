@@ -245,14 +245,32 @@ export const LandingView: React.FC<LandingViewProps> = ({
           ))}
 
           {filteredReports.length === 0 && (
-            <div className="text-center py-10 bg-white rounded-xl border border-slate-200 p-6">
-              <p className="text-sm font-medium text-slate-600">No reports found in this category.</p>
-              <button
-                onClick={() => setFilterTab('ALL')}
-                className="mt-2 text-xs font-bold text-emerald-600 hover:underline"
-              >
-                Show all reports
-              </button>
+            <div className="text-center py-10 bg-white rounded-xl border border-slate-200 p-6 space-y-2">
+              {reports.length === 0 ? (
+                <>
+                  <p className="text-sm font-semibold text-slate-800">No sightings or reports yet.</p>
+                  <p className="text-xs text-slate-500">
+                    The directory is fresh and ready. Log a report to help reconnect a lost or found person.
+                  </p>
+                  <button
+                    onClick={onOpenReport}
+                    className="mt-2 inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    Report a Lost / Found Person
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-medium text-slate-600">No reports found in this category.</p>
+                  <button
+                    onClick={() => setFilterTab('ALL')}
+                    className="mt-2 text-xs font-bold text-emerald-600 hover:underline"
+                  >
+                    Show all reports
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
