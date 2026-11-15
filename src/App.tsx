@@ -131,6 +131,7 @@ export default function App() {
             initialQuery={activeScreen.initialQuery}
             onBack={() => navigateTo({ type: 'landing' })}
             onSelectReport={(code) => navigateTo({ type: 'profile', trackingCode: code })}
+            onOpenReport={() => navigateTo({ type: 'report' })}
           />
         )}
 

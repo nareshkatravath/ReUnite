@@ -9,7 +9,8 @@ import {
   FileText, 
   Clock, 
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  PlusCircle
 } from 'lucide-react';
 import { PersonReport } from '../types';
 import { formatTimeAgo } from '../utils/storage';
@@ -19,6 +20,7 @@ interface SearchViewProps {
   initialQuery?: string;
   onBack: () => void;
   onSelectReport: (trackingCode: string) => void;
+  onOpenReport?: () => void;
 }
 
 export const SearchView: React.FC<SearchViewProps> = ({
@@ -26,6 +28,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
   initialQuery = '',
   onBack,
   onSelectReport,
+  onOpenReport,
 }) => {
   // Direct ID / Tracking code query
   const [directCodeQuery, setDirectCodeQuery] = useState(initialQuery);
@@ -372,10 +375,30 @@ export const SearchView: React.FC<SearchViewProps> = ({
               </div>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
                 {reports.length === 0
-                  ? 'No sightings have been logged yet. Return home to report a lost or found person.'
+                  ? 'No sightings have been logged yet. You can file a new sighting report right now.'
                   : 'Try widening your search filters, checking spelling, or clearing the tracking code lookup.'}
               </p>
-              {reports.length > 0 && (
+              {reports.length === 0 ? (
+                <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                  {onOpenReport && (
+                    <button
+                      type="button"
+                      onClick={onOpenReport}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl transition-colors"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5" />
+                      Report a Lost / Found Person
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={onBack}
+                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors"
+                  >
+                    Back to Home
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
                   onClick={handleResetFilters}
