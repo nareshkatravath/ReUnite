@@ -35,7 +35,7 @@ jobs:
             yes | "$SDK_MANAGER" --licenses >/dev/null || true
           fi
           mkdir -p "${ANDROID_HOME}/licenses"
-          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e" >> "${ANDROID_HOME}/licenses/android-sdk-license"
+          printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" >> "${ANDROID_HOME}/licenses/android-sdk-license"
 
       - name: Install dependencies and sync Capacitor
         run: |
@@ -50,23 +50,111 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --stacktrace --no-daemon
 
-      - name: Prepare APK for download
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk ReuniteApp-debug.apk
+      - name: Verify Debug APK
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$APK_PATH" ] || [ ! -s "$APK_PATH" ]; then
+            echo "ERROR: Expected debug APK not found or empty at $APK_PATH"
+            if [ -d "android/app/build/outputs/apk" ]; then
+              find android/app/build/outputs/apk -type f -name "*.apk"
+            fi
+            exit 1
+          fi
+          ls -lh "$APK_PATH"
 
-      - name: Upload APK Artifact
+      - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ReuniteApp-debug-apk
-          path: ReuniteApp-debug.apk
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
-      - name: Publish Direct APK Download (GitHub Release)
-        uses: softprops/action-gh-release@v2
+      - name: Prepare APK release asset
+        id: prepare_asset
+        run: |
+          SOURCE_APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          RAW_REPO="${GITHUB_REPOSITORY##*/}"
+          SAFE_REPO="$(printf '%s' "$RAW_REPO" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+          if [ -z "$SAFE_REPO" ]; then
+            SAFE_REPO="app"
+          fi
+          ASSET_DIR="${RUNNER_TEMP}/apk-release-asset"
+          mkdir -p "$ASSET_DIR"
+          ASSET_FILENAME="${SAFE_REPO}-debug-build-${GITHUB_RUN_NUMBER}.apk"
+          ASSET_PATH="${ASSET_DIR}/${ASSET_FILENAME}"
+          cp "$SOURCE_APK" "$ASSET_PATH"
+          if [ ! -f "$ASSET_PATH" ] || [ ! -s "$ASSET_PATH" ]; then
+            echo "ERROR: Prepared APK release asset is missing or empty."
+            exit 1
+          fi
+          echo "asset_path=${ASSET_PATH}" >> "$GITHUB_OUTPUT"
+          echo "asset_filename=${ASSET_FILENAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish APK to GitHub Releases
+        id: publish_release
         continue-on-error: true
-        with:
-          tag_name: debug-latest
-          name: ReuniteApp Debug APK (Latest)
-          prerelease: true
-          make_latest: true
-          files: ReuniteApp-debug.apk
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh --version
+          ASSET_PATH="${{ steps.prepare_asset.outputs.asset_path }}"
+          if [ ! -f "$ASSET_PATH" ] || [ ! -s "$ASSET_PATH" ]; then
+            echo "ERROR: Release asset missing or empty at $ASSET_PATH"
+            exit 1
+          fi
+          TAG="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          TITLE="Debug APK Build #${GITHUB_RUN_NUMBER}"
+          NOTES=$(cat <<EOF
+          Automatically generated debug APK built by GitHub Actions.
+
+          - **Run Number**: ${GITHUB_RUN_NUMBER}
+          - **Run Attempt**: ${GITHUB_RUN_ATTEMPT}
+          - **Source Commit**: ${GITHUB_SHA}
+          - **Build Type**: Debug APK for testing (not a Play Store production release)
+          EOF
+          )
+          gh release create "$TAG" "$ASSET_PATH" \
+            --title "$TITLE" \
+            --notes "$NOTES" \
+            --target "${GITHUB_SHA}" \
+            --latest
+          RELEASE_URL="$(gh release view "$TAG" --json url --jq '.url')"
+          echo "release_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_title=${TITLE}" >> "$GITHUB_OUTPUT"
+          echo "release_url=${RELEASE_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Report APK download result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ASSET_FILENAME="${{ steps.prepare_asset.outputs.asset_filename }}"
+          if [ "${{ steps.publish_release.outcome }}" = "success" ]; then
+            TAG="${{ steps.publish_release.outputs.release_tag }}"
+            TITLE="${{ steps.publish_release.outputs.release_title }}"
+            RELEASE_URL="${{ steps.publish_release.outputs.release_url }}"
+            gh release view "$TAG"
+            echo "Release Tag: $TAG"
+            echo "Release Title: $TITLE"
+            echo "Release URL: $RELEASE_URL"
+            echo "APK Filename: $ASSET_FILENAME"
+            {
+              echo "### Debug APK Published to GitHub Releases"
+              echo "- **Release Title**: ${TITLE}"
+              echo "- **Release Tag**: \`${TAG}\`"
+              echo "- **APK Asset**: \`${ASSET_FILENAME}\`"
+              echo "- **Download Page**: ${RELEASE_URL}"
+              echo ""
+              echo "Open the **Assets** section on the release page to download \`${ASSET_FILENAME}\` directly on your phone. The backup Actions artifact \`app-debug-apk\` is also available on this workflow run."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::GitHub Release publishing failed, but the APK build and Actions artifact upload succeeded."
+            {
+              echo "### Debug APK Build Succeeded (Release Publishing Failed)"
+              echo "⚠️ GitHub Release creation failed (verify that repository **Settings → Actions → General → Workflow permissions** allows **Read and write permissions**)."
+              echo ""
+              echo "Your compiled APK is still available in this workflow run under **Artifacts → \`app-debug-apk\`**."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
