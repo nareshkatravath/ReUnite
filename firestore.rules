@@ -1,0 +1,218 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 64 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email == 'nareshkatravath2004@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidNumber(val, minVal, maxVal) {
+      return (val is int || val is float) && val >= minVal && val <= maxVal;
+    }
+
+    function isValidReport(data, reportId) {
+      return data.keys().hasAll([
+          'id',
+          'trackingCode',
+          'nameOrAlias',
+          'approxAge',
+          'gender',
+          'marksAndClothing',
+          'languagesSpoken',
+          'cityDistrict',
+          'exactSpot',
+          'latitude',
+          'longitude',
+          'reporterPhone',
+          'photoUrl',
+          'reportedAt',
+          'status',
+          'notesCount',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'trackingCode',
+          'nameOrAlias',
+          'approxAge',
+          'gender',
+          'documentId',
+          'marksAndClothing',
+          'languagesSpoken',
+          'cityDistrict',
+          'exactSpot',
+          'latitude',
+          'longitude',
+          'gpsAccuracy',
+          'reporterPhone',
+          'reporterName',
+          'photoUrl',
+          'reportedAt',
+          'status',
+          'notesCount',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.id == reportId
+        && isValidId(data.id)
+        && data.trackingCode is string
+        && data.trackingCode.size() >= 5
+        && data.trackingCode.size() <= 20
+        && data.trackingCode.matches('^TRK-[0-9]{5}$')
+        && isValidString(data.nameOrAlias, 1, 120)
+        && isValidNumber(data.approxAge, 0, 120)
+        && data.gender in ['Male', 'Female', 'Other', 'Unknown']
+        && (!('documentId' in data) || isValidString(data.documentId, 0, 80))
+        && isValidString(data.marksAndClothing, 1, 1000)
+        && isValidString(data.languagesSpoken, 1, 200)
+        && isValidString(data.cityDistrict, 1, 120)
+        && isValidString(data.exactSpot, 1, 300)
+        && isValidNumber(data.latitude, -90, 90)
+        && isValidNumber(data.longitude, -180, 180)
+        && (!('gpsAccuracy' in data) || isValidNumber(data.gpsAccuracy, 0, 100000))
+        && isValidString(data.reporterPhone, 5, 30)
+        && (!('reporterName' in data) || isValidString(data.reporterName, 0, 120))
+        && isValidString(data.photoUrl, 1, 600000)
+        && isValidString(data.reportedAt, 10, 40)
+        && data.status in ['UNRESOLVED', 'REUNITED']
+        && data.notesCount is int
+        && data.notesCount >= 0
+        && data.notesCount <= 10000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSightingNote(data, reportId, noteId) {
+      return data.keys().hasAll([
+          'id',
+          'reportId',
+          'text',
+          'reporter',
+          'timestamp',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'reportId',
+          'text',
+          'reporter',
+          'timestamp',
+          'createdAt'
+        ])
+        && data.id == noteId
+        && data.reportId == reportId
+        && isValidId(data.id)
+        && isValidId(data.reportId)
+        && isValidString(data.text, 1, 1000)
+        && isValidString(data.reporter, 1, 120)
+        && isValidString(data.timestamp, 10, 40)
+        && data.createdAt == request.time;
+    }
+
+    // Public community missing/found person directory (no login required by design)
+    match /reports/{reportId} {
+      allow get: if isValidId(reportId)
+        && resource.data.status in ['UNRESOLVED', 'REUNITED'];
+
+      allow list: if resource.data.status in ['UNRESOLVED', 'REUNITED'];
+
+      allow create: if isValidId(reportId)
+        && isValidReport(incoming(), reportId)
+        && incoming().notesCount <= 1
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isValidId(reportId)
+        && isValidReport(incoming(), reportId)
+        && incoming().id == existing().id
+        && incoming().trackingCode == existing().trackingCode
+        && incoming().reportedAt == existing().reportedAt
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Toggle resolution status
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && incoming().status in ['UNRESOLVED', 'REUNITED']
+          ) ||
+          // Action 2: Increment sighting notes counter alongside subcollection write
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['notesCount', 'updatedAt'])
+            && incoming().notesCount == existing().notesCount + 1
+          ) ||
+          // Action 3: Update reported person/location/contact/photo details
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'nameOrAlias',
+              'approxAge',
+              'gender',
+              'documentId',
+              'marksAndClothing',
+              'languagesSpoken',
+              'cityDistrict',
+              'exactSpot',
+              'latitude',
+              'longitude',
+              'gpsAccuracy',
+              'reporterPhone',
+              'reporterName',
+              'photoUrl',
+              'status',
+              'updatedAt'
+            ])
+          ) ||
+          isAdmin()
+        );
+
+      allow delete: if isValidId(reportId) && isAdmin();
+
+      match /notes/{noteId} {
+        allow get: if isValidId(reportId)
+          && isValidId(noteId)
+          && resource.data.reportId == reportId;
+
+        allow list: if isValidId(reportId)
+          && resource.data.reportId == reportId;
+
+        allow create: if isValidId(reportId)
+          && isValidId(noteId)
+          && isValidSightingNote(incoming(), reportId, noteId)
+          && (
+            exists(/databases/$(database)/documents/reports/$(reportId))
+            || existsAfter(/databases/$(database)/documents/reports/$(reportId))
+          );
+
+        allow update: if false;
+        allow delete: if isValidId(reportId) && isValidId(noteId) && isAdmin();
+      }
+    }
+  }
+}

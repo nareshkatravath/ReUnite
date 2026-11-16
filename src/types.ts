@@ -26,6 +26,7 @@ export interface PersonReport {
   photoUrl: string;
   reportedAt: string;       // ISO string
   status: ReportStatus;
+  notesCount?: number;
   notes?: SightingNote[];
 }
 

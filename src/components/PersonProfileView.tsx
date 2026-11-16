@@ -1,28 +1,33 @@
-import React, { useState } from 'react';
-import { 
-  ArrowLeft, 
-  Share2, 
-  Phone, 
-  MapPin, 
-  Clock, 
-  ShieldAlert, 
-  CheckCircle2, 
-  MessageSquare, 
-  Send, 
-  Copy, 
-  Check, 
-  Maximize2, 
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  ArrowLeft,
+  Share2,
+  Phone,
+  Clock,
+  MessageSquare,
+  Send,
+  Check,
+  Maximize2,
   X,
-  ExternalLink,
-  HeartHandshake
+  Pencil,
+  Save,
+  Navigation,
+  Loader2,
+  Camera,
+  AlertCircle,
 } from 'lucide-react';
-import { PersonReport } from '../types';
-import { 
-  formatDetailedReportDate, 
-  generateWhatsAppShareUrl, 
-  updateReportStatus, 
-  addSightingNote 
+import { PersonReport, ReportStatus, SightingNote } from '../types';
+import {
+  formatDetailedReportDate,
+  generateWhatsAppShareUrl,
 } from '../utils/storage';
+import {
+  addSightingNoteInDb,
+  subscribeToReportNotes,
+  updateReportDetailsInDb,
+  updateReportStatusInDb,
+} from '../services/reportsDb';
+import { compressImageToDataUrl } from '../utils/image';
 import { MapPinpoint } from './MapPinpoint';
 
 interface PersonProfileViewProps {
@@ -42,6 +47,62 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
   const [newNoteReporter, setNewNoteReporter] = useState('');
   const [isSubmittingNote, setIsSubmittingNote] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [notes, setNotes] = useState<SightingNote[]>(report.notes || []);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Edit Details Mode State
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+  const [isSavingDetails, setIsSavingDetails] = useState(false);
+  const [isCapturingGps, setIsCapturingGps] = useState(false);
+  const [editNameOrAlias, setEditNameOrAlias] = useState(report.nameOrAlias);
+  const [editApproxAge, setEditApproxAge] = useState(report.approxAge ? String(report.approxAge) : '');
+  const [editGender, setEditGender] = useState<PersonReport['gender']>(report.gender);
+  const [editDocumentId, setEditDocumentId] = useState(report.documentId || '');
+  const [editMarksAndClothing, setEditMarksAndClothing] = useState(report.marksAndClothing);
+  const [editLanguagesSpoken, setEditLanguagesSpoken] = useState(report.languagesSpoken);
+  const [editCityDistrict, setEditCityDistrict] = useState(report.cityDistrict);
+  const [editExactSpot, setEditExactSpot] = useState(report.exactSpot);
+  const [editLatitude, setEditLatitude] = useState(report.latitude);
+  const [editLongitude, setEditLongitude] = useState(report.longitude);
+  const [editGpsAccuracy, setEditGpsAccuracy] = useState<number | undefined>(report.gpsAccuracy);
+  const [editReporterPhone, setEditReporterPhone] = useState(report.reporterPhone);
+  const [editReporterName, setEditReporterName] = useState(report.reporterName || '');
+  const [editPhotoUrl, setEditPhotoUrl] = useState(report.photoUrl);
+  const [editStatus, setEditStatus] = useState<ReportStatus>(report.status);
+  const editFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync edit fields when switching to another report
+  useEffect(() => {
+    setEditNameOrAlias(report.nameOrAlias);
+    setEditApproxAge(report.approxAge ? String(report.approxAge) : '');
+    setEditGender(report.gender);
+    setEditDocumentId(report.documentId || '');
+    setEditMarksAndClothing(report.marksAndClothing);
+    setEditLanguagesSpoken(report.languagesSpoken);
+    setEditCityDistrict(report.cityDistrict);
+    setEditExactSpot(report.exactSpot);
+    setEditLatitude(report.latitude);
+    setEditLongitude(report.longitude);
+    setEditGpsAccuracy(report.gpsAccuracy);
+    setEditReporterPhone(report.reporterPhone);
+    setEditReporterName(report.reporterName || '');
+    setEditPhotoUrl(report.photoUrl);
+    setEditStatus(report.status);
+  }, [report]);
+
+  // Subscribe to real-time Firestore sighting notes subcollection
+  useEffect(() => {
+    const unsubscribe = subscribeToReportNotes(
+      report.id,
+      (liveNotes) => {
+        setNotes(liveNotes);
+      },
+      (err) => {
+        console.warn('Unable to stream sighting notes:', err);
+      }
+    );
+    return () => unsubscribe();
+  }, [report.id]);
 
   const whatsAppUrl = generateWhatsAppShareUrl(report);
 
@@ -56,49 +117,140 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
       try {
         await navigator.share(shareData);
         return;
-      } catch (err) {
+      } catch {
         // Fallback to copy
       }
     }
 
-    // Fallback: Copy link
     navigator.clipboard.writeText(window.location.href);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
   };
 
-  const handleToggleStatus = () => {
+  const handleToggleStatus = async () => {
     setStatusUpdating(true);
-    const newStatus = report.status === 'UNRESOLVED' ? 'REUNITED' : 'UNRESOLVED';
-    const updated = updateReportStatus(report.trackingCode, newStatus);
-    if (updated) {
-      onReportUpdated(updated);
+    setActionError(null);
+    const newStatus: ReportStatus = report.status === 'UNRESOLVED' ? 'REUNITED' : 'UNRESOLVED';
+    try {
+      await updateReportStatusInDb(report.id, newStatus);
+      onReportUpdated({ ...report, status: newStatus });
+    } catch (err) {
+      console.error('Failed to update status in database:', err);
+      setActionError('Failed to update status in the database. Please try again.');
+    } finally {
+      setStatusUpdating(false);
     }
-    setStatusUpdating(false);
   };
 
-  const handleAddNote = (e: React.FormEvent) => {
+  const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newNoteText.trim()) return;
 
     setIsSubmittingNote(true);
-    const updated = addSightingNote(
-      report.trackingCode,
-      newNoteText.trim(),
-      newNoteReporter.trim() || 'Community Member'
-    );
-    if (updated) {
-      onReportUpdated(updated);
+    setActionError(null);
+    try {
+      const currentCount = Math.max(report.notesCount ?? 0, notes.length);
+      await addSightingNoteInDb(
+        report.id,
+        currentCount,
+        newNoteText.trim(),
+        newNoteReporter.trim() || 'Community Member'
+      );
       setNewNoteText('');
       setNewNoteReporter('');
+    } catch (err) {
+      console.error('Failed to post sighting note:', err);
+      setActionError('Failed to save sighting update to the database. Please try again.');
+    } finally {
+      setIsSubmittingNote(false);
     }
-    setIsSubmittingNote(false);
+  };
+
+  const handleEditPhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setActionError(null);
+    try {
+      const compressed = await compressImageToDataUrl(file);
+      setEditPhotoUrl(compressed);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to process selected photo.');
+    }
+  };
+
+  const handleRecaptureGps = () => {
+    if (!navigator.geolocation) {
+      setActionError('Geolocation is not supported on this device.');
+      return;
+    }
+    setIsCapturingGps(true);
+    setActionError(null);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setEditLatitude(position.coords.latitude);
+        setEditLongitude(position.coords.longitude);
+        setEditGpsAccuracy(Math.round(position.coords.accuracy));
+        setIsCapturingGps(false);
+      },
+      () => {
+        setActionError('Unable to retrieve GPS signal. You can still edit the landmark or coordinates manually.');
+        setIsCapturingGps(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  const handleSaveDetails = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setActionError(null);
+
+    if (!editCityDistrict.trim() || !editExactSpot.trim() || editReporterPhone.trim().length < 5) {
+      setActionError('City/District, Exact Spot, and a valid Reporter Phone (5+ characters) are required.');
+      return;
+    }
+
+    setIsSavingDetails(true);
+    const parsedAge = editApproxAge.trim() ? parseInt(editApproxAge.trim(), 10) : 0;
+    const safeAge = Number.isFinite(parsedAge) ? Math.min(120, Math.max(0, parsedAge)) : 0;
+
+    const updates = {
+      nameOrAlias: editNameOrAlias.trim() || 'Unknown',
+      approxAge: safeAge,
+      gender: editGender,
+      documentId: editDocumentId.trim(),
+      marksAndClothing: editMarksAndClothing.trim() || 'No specific marks reported',
+      languagesSpoken: editLanguagesSpoken.trim() || 'Unknown / Non-verbal',
+      cityDistrict: editCityDistrict.trim(),
+      exactSpot: editExactSpot.trim(),
+      latitude: Number.isFinite(editLatitude) ? editLatitude : report.latitude,
+      longitude: Number.isFinite(editLongitude) ? editLongitude : report.longitude,
+      gpsAccuracy: editGpsAccuracy,
+      reporterPhone: editReporterPhone.trim(),
+      reporterName: editReporterName.trim() || 'Concerned Citizen',
+      photoUrl: editPhotoUrl || report.photoUrl,
+      status: editStatus,
+    };
+
+    try {
+      await updateReportDetailsInDb(report.id, updates);
+      onReportUpdated({
+        ...report,
+        ...updates,
+        documentId: updates.documentId || undefined,
+      });
+      setIsEditingDetails(false);
+    } catch (err) {
+      console.error('Failed to update reported details:', err);
+      setActionError('Could not update reported details in the database. Please check your connection and try again.');
+    } finally {
+      setIsSavingDetails(false);
+    }
   };
 
   return (
     <div className="space-y-6 pb-20 animate-in fade-in duration-150">
-      {/* Header bar matching wireframe Screen 4: [< Back] File Details: TRK-58210 [Share] */}
-      <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+      {/* Header bar */}
+      <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-200">
         <button
           id="profile-back-button"
           onClick={onBack}
@@ -108,33 +260,292 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
           <span>Back</span>
         </button>
 
-        <h1 className="text-sm sm:text-base font-mono font-bold text-slate-900 tracking-wide">
+        <h1 className="text-sm sm:text-base font-mono font-bold text-slate-900 tracking-wide truncate">
           File Details: <span className="text-emerald-700">{report.trackingCode}</span>
         </h1>
 
-        <button
-          id="profile-share-button"
-          onClick={handleShare}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-colors border border-emerald-200"
-          title="Share File Link"
-        >
-          {copiedLink ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Copied!</span>
-            </>
-          ) : (
-            <>
-              <Share2 className="w-3.5 h-3.5" />
-              <span>Share</span>
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            id="edit-report-details-button"
+            type="button"
+            onClick={() => {
+              setActionError(null);
+              setIsEditingDetails((prev) => !prev);
+            }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-colors border border-slate-200"
+            title="Edit Reported Details"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{isEditingDetails ? 'Cancel' : 'Edit'}</span>
+          </button>
+
+          <button
+            id="profile-share-button"
+            onClick={handleShare}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-bold transition-colors border border-emerald-200"
+            title="Share File Link"
+          >
+            {copiedLink ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Copied!</span>
+              </>
+            ) : (
+              <>
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Share</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* FULL SCREEN PHOTO container matching wireframe */}
+      {actionError && (
+        <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          <span>{actionError}</span>
+        </div>
+      )}
+
+      {/* Inline Edit Reported Details Form */}
+      {isEditingDetails && (
+        <form
+          onSubmit={handleSaveDetails}
+          className="bg-white rounded-2xl border-2 border-emerald-500 shadow-sm p-5 space-y-4"
+        >
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <h2 className="text-xs font-black uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+              <Pencil className="w-3.5 h-3.5" />
+              Update All Reported Details in Database
+            </h2>
+            <button
+              type="button"
+              onClick={() => setIsEditingDetails(false)}
+              className="text-xs text-slate-500 hover:text-slate-800 font-semibold"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <img
+              src={editPhotoUrl}
+              alt={editNameOrAlias}
+              className="w-20 h-24 rounded-xl object-cover border border-slate-200 bg-slate-100 shrink-0"
+            />
+            <div className="space-y-2">
+              <input
+                type="file"
+                ref={editFileInputRef}
+                onChange={handleEditPhotoSelect}
+                accept="image/*"
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => editFileInputRef.current?.click()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-semibold"
+              >
+                <Camera className="w-3.5 h-3.5" />
+                <span>Update Photo</span>
+              </button>
+              <p className="text-[11px] text-slate-500">
+                Photos are automatically compressed for cloud sync.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Name / Alias</label>
+              <input
+                type="text"
+                value={editNameOrAlias}
+                onChange={(e) => setEditNameOrAlias(e.target.value)}
+                maxLength={120}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">ID / Document / Token</label>
+              <input
+                type="text"
+                value={editDocumentId}
+                onChange={(e) => setEditDocumentId(e.target.value)}
+                maxLength={80}
+                placeholder="Optional"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Approx Age</label>
+              <input
+                type="number"
+                min={0}
+                max={120}
+                value={editApproxAge}
+                onChange={(e) => setEditApproxAge(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Gender</label>
+              <select
+                value={editGender}
+                onChange={(e) => setEditGender(e.target.value as PersonReport['gender'])}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              >
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+                <option value="Unknown">Unknown</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Status</label>
+              <select
+                value={editStatus}
+                onChange={(e) => setEditStatus(e.target.value as ReportStatus)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              >
+                <option value="UNRESOLVED">UNRESOLVED</option>
+                <option value="REUNITED">REUNITED</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Languages Spoken</label>
+              <input
+                type="text"
+                value={editLanguagesSpoken}
+                onChange={(e) => setEditLanguagesSpoken(e.target.value)}
+                maxLength={200}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-800 mb-1">Visible Marks & Clothing</label>
+            <textarea
+              rows={2}
+              value={editMarksAndClothing}
+              onChange={(e) => setEditMarksAndClothing(e.target.value)}
+              maxLength={1000}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">City / District *</label>
+              <input
+                type="text"
+                required
+                value={editCityDistrict}
+                onChange={(e) => setEditCityDistrict(e.target.value)}
+                maxLength={120}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Exact Spot / Landmark *</label>
+              <input
+                type="text"
+                required
+                value={editExactSpot}
+                onChange={(e) => setEditExactSpot(e.target.value)}
+                maxLength={300}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-mono text-slate-700">
+                GPS: {editLatitude.toFixed(4)}°, {editLongitude.toFixed(4)}°
+                {editGpsAccuracy ? ` (±${editGpsAccuracy}m)` : ''}
+              </span>
+              <button
+                type="button"
+                onClick={handleRecaptureGps}
+                disabled={isCapturingGps}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-semibold"
+              >
+                {isCapturingGps ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                ) : (
+                  <Navigation className="w-3.5 h-3.5 text-emerald-400" />
+                )}
+                <span>Update GPS to Current Location</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Reporter Mobile *</label>
+              <input
+                type="tel"
+                required
+                value={editReporterPhone}
+                onChange={(e) => setEditReporterPhone(e.target.value)}
+                maxLength={30}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 mb-1">Reporter Name</label>
+              <input
+                type="text"
+                value={editReporterName}
+                onChange={(e) => setEditReporterName(e.target.value)}
+                maxLength={120}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900"
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setIsEditingDetails(false)}
+              className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold"
+            >
+              Cancel
+            </button>
+            <button
+              id="save-updated-details-button"
+              type="submit"
+              disabled={isSavingDetails}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-60"
+            >
+              {isSavingDetails ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Saving to Database...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save Updated Details</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* FULL SCREEN PHOTO container */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div 
+        <div
           onClick={() => setShowPhotoModal(true)}
           className="relative w-full h-72 sm:h-96 bg-slate-950 cursor-pointer group flex items-center justify-center overflow-hidden"
         >
@@ -153,7 +564,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
           </div>
         </div>
 
-        {/* Name, Status & Age Bar matching wireframe Screen 4 */}
+        {/* Name, Status & Age Bar */}
         <div className="p-5 border-b border-slate-100 space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-xl sm:text-2xl font-black text-slate-900">
@@ -175,10 +586,12 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
               <button
                 onClick={handleToggleStatus}
                 disabled={statusUpdating}
-                className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-2"
+                className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline underline-offset-2 disabled:opacity-50"
                 title="Update Resolution Status"
               >
-                Mark as {report.status === 'UNRESOLVED' ? 'Reunited' : 'Unresolved'}
+                {statusUpdating
+                  ? 'Updating...'
+                  : `Mark as ${report.status === 'UNRESOLVED' ? 'Reunited' : 'Unresolved'}`}
               </button>
             </div>
           </div>
@@ -195,7 +608,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
           </div>
         </div>
 
-        {/* PHYSICAL ATTRIBUTES matching wireframe Screen 4 */}
+        {/* PHYSICAL ATTRIBUTES */}
         <div className="p-5 border-b border-slate-100 space-y-3 bg-slate-50/50">
           <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
             PHYSICAL ATTRIBUTES
@@ -225,7 +638,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
           </ul>
         </div>
 
-        {/* REPORTED LOCATION matching wireframe Screen 4 */}
+        {/* REPORTED LOCATION */}
         <div className="p-5 border-b border-slate-100 space-y-3">
           <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
             REPORTED LOCATION
@@ -248,7 +661,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
           </ul>
         </div>
 
-        {/* GOOGLE MAP EXACT PINPOINT matching wireframe Screen 4 */}
+        {/* GOOGLE MAP EXACT PINPOINT */}
         <div className="p-5 border-b border-slate-100 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
@@ -259,7 +672,6 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
             </span>
           </div>
 
-          {/* Interactive Leaflet Map with directions button */}
           <MapPinpoint
             latitude={report.latitude}
             longitude={report.longitude}
@@ -269,7 +681,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
           />
         </div>
 
-        {/* REPORTER ACTION matching wireframe Screen 4 */}
+        {/* REPORTER ACTION */}
         <div className="p-5 space-y-3.5 bg-slate-50">
           <div className="space-y-1">
             <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
@@ -283,7 +695,6 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {/* CALL REPORTER DIRECTLY matching wireframe Screen 4 */}
             <a
               id="call-reporter-button"
               href={`tel:${report.reporterPhone.replace(/\s+/g, '')}`}
@@ -293,7 +704,6 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
               <span>CALL REPORTER DIRECTLY</span>
             </a>
 
-            {/* SHARE PROFILE ON WHATSAPP matching wireframe Screen 4 */}
             <a
               id="whatsapp-share-button"
               href={whatsAppUrl}
@@ -316,7 +726,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
             <span>Community Sighting Log & Status Notes</span>
           </h3>
           <span className="text-xs text-slate-400">
-            {report.notes?.length || 0} updates
+            {notes.length} updates
           </span>
         </div>
 
@@ -327,6 +737,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
             onChange={(e) => setNewNoteText(e.target.value)}
             placeholder="Add update (e.g. 'Seen resting near Platform 2 tea stall', 'Food provided', 'Spoke to RPF officer on duty')..."
             rows={2}
+            maxLength={1000}
             className="w-full px-3.5 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white"
           />
           <div className="flex flex-col sm:flex-row gap-2 items-center justify-between">
@@ -335,6 +746,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
               value={newNoteReporter}
               onChange={(e) => setNewNoteReporter(e.target.value)}
               placeholder="Your name or affiliation (e.g., Volunteer Amit)"
+              maxLength={120}
               className="w-full sm:w-64 px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900"
             />
             <button
@@ -343,15 +755,15 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
               className="w-full sm:w-auto px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>Post Update</span>
+              <span>{isSubmittingNote ? 'Saving...' : 'Post Update'}</span>
             </button>
           </div>
         </form>
 
         {/* Existing notes list */}
-        {report.notes && report.notes.length > 0 && (
+        {notes.length > 0 && (
           <div className="space-y-2.5 pt-2">
-            {report.notes.map((note) => (
+            {notes.map((note) => (
               <div key={note.id} className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
                 <div className="flex items-center justify-between text-[11px] text-slate-500">
                   <span className="font-semibold text-slate-700">{note.reporter}</span>
@@ -366,7 +778,7 @@ export const PersonProfileView: React.FC<PersonProfileViewProps> = ({
 
       {/* Full Photo Modal */}
       {showPhotoModal && (
-        <div 
+        <div
           className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
           onClick={() => setShowPhotoModal(false)}
         >

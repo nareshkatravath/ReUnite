@@ -15,10 +15,11 @@ import {
 } from 'lucide-react';
 import { PersonReport } from '../types';
 import { generateTrackingCode } from '../utils/storage';
+import { compressImageToDataUrl } from '../utils/image';
 
 interface ReportFormViewProps {
   onBack: () => void;
-  onSubmitReport: (newReport: PersonReport) => void;
+  onSubmitReport: (newReport: PersonReport) => Promise<void>;
 }
 
 export const ReportFormView: React.FC<ReportFormViewProps> = ({
@@ -55,17 +56,16 @@ export const ReportFormView: React.FC<ReportFormViewProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Handle Photo Upload / Capture
-  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle Photo Upload / Capture with automatic compression for Firestore
+  const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setPhotoUrl(reader.result);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+    setErrorMsg(null);
+    try {
+      const compressed = await compressImageToDataUrl(file);
+      setPhotoUrl(compressed);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Unable to process selected photo.');
     }
   };
 
@@ -111,11 +111,11 @@ export const ReportFormView: React.FC<ReportFormViewProps> = ({
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
-    // Validation
+    // Validation aligned with database schema constraints
     if (!exactSpot.trim()) {
       setErrorMsg('Please specify the Exact Spot / Landmark / Shelter.');
       return;
@@ -124,8 +124,8 @@ export const ReportFormView: React.FC<ReportFormViewProps> = ({
       setErrorMsg('Please enter the City / District.');
       return;
     }
-    if (!reporterPhone.trim()) {
-      setErrorMsg('Please provide a Reporter Mobile Number for searchers/authorities to contact.');
+    if (!reporterPhone.trim() || reporterPhone.trim().length < 5) {
+      setErrorMsg('Please provide a valid Reporter Mobile Number (at least 5 characters) for searchers/authorities to contact.');
       return;
     }
 
@@ -154,6 +154,7 @@ export const ReportFormView: React.FC<ReportFormViewProps> = ({
       photoUrl: finalPhoto,
       reportedAt: new Date().toISOString(),
       status: 'UNRESOLVED',
+      notesCount: 1,
       notes: [
         {
           id: 'n-init-' + Date.now(),
@@ -164,10 +165,14 @@ export const ReportFormView: React.FC<ReportFormViewProps> = ({
       ]
     };
 
-    setTimeout(() => {
-      onSubmitReport(newReport);
+    try {
+      await onSubmitReport(newReport);
+    } catch (err) {
+      console.error('Failed to save report to database:', err);
+      setErrorMsg('Failed to save report to the database. Please check your internet connection and try again.');
+    } finally {
       setIsSubmitting(false);
-    }, 400);
+    }
   };
 
   return (

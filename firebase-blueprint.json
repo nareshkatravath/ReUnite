@@ -1,0 +1,211 @@
+{
+  "entities": {
+    "PersonReport": {
+      "title": "PersonReport",
+      "description": "A lost or found person community report stored in the ReuniteApp Firestore directory.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique report document identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "trackingCode": {
+          "type": "string",
+          "description": "Public 5-digit tracking code in TRK-XXXXX format.",
+          "minLength": 5,
+          "maxLength": 20,
+          "pattern": "^TRK-[0-9]{5}$"
+        },
+        "nameOrAlias": {
+          "type": "string",
+          "description": "Known name, nickname, or Unknown.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "approxAge": {
+          "type": "number",
+          "description": "Estimated age in years (0 if unknown)."
+        },
+        "gender": {
+          "type": "string",
+          "description": "Gender presentation of the person.",
+          "enum": ["Male", "Female", "Other", "Unknown"]
+        },
+        "documentId": {
+          "type": "string",
+          "description": "Optional government ID, ration card, or hospital token reference.",
+          "maxLength": 80
+        },
+        "marksAndClothing": {
+          "type": "string",
+          "description": "Physical marks, scars, clothing, and identifying details.",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "languagesSpoken": {
+          "type": "string",
+          "description": "Languages or words spoken by the person.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "cityDistrict": {
+          "type": "string",
+          "description": "City or district where the person was spotted.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "exactSpot": {
+          "type": "string",
+          "description": "Specific landmark, station platform, shelter, or street spot.",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "latitude": {
+          "type": "number",
+          "description": "WGS84 latitude coordinate."
+        },
+        "longitude": {
+          "type": "number",
+          "description": "WGS84 longitude coordinate."
+        },
+        "gpsAccuracy": {
+          "type": "number",
+          "description": "Optional GPS accuracy radius in meters."
+        },
+        "reporterPhone": {
+          "type": "string",
+          "description": "Contact phone number of the reporter.",
+          "minLength": 5,
+          "maxLength": 30
+        },
+        "reporterName": {
+          "type": "string",
+          "description": "Optional name or affiliation of the reporter.",
+          "maxLength": 120
+        },
+        "photoUrl": {
+          "type": "string",
+          "description": "Compressed portrait data URL or HTTPS image URL.",
+          "minLength": 1,
+          "maxLength": 600000
+        },
+        "reportedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp string when the sighting was reported.",
+          "minLength": 10,
+          "maxLength": 40
+        },
+        "status": {
+          "type": "string",
+          "description": "Current resolution status of the case.",
+          "enum": ["UNRESOLVED", "REUNITED"]
+        },
+        "notesCount": {
+          "type": "number",
+          "description": "Count of sighting notes logged in the notes subcollection."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the document was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the document was last updated."
+        }
+      },
+      "required": [
+        "id",
+        "trackingCode",
+        "nameOrAlias",
+        "approxAge",
+        "gender",
+        "marksAndClothing",
+        "languagesSpoken",
+        "cityDistrict",
+        "exactSpot",
+        "latitude",
+        "longitude",
+        "reporterPhone",
+        "photoUrl",
+        "reportedAt",
+        "status",
+        "notesCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "SightingNote": {
+      "title": "SightingNote",
+      "description": "A follow-up sighting log or status note attached to a PersonReport.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique sighting note identifier.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "reportId": {
+          "type": "string",
+          "description": "Parent PersonReport document ID.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "text": {
+          "type": "string",
+          "description": "Sighting update or coordination note text.",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "reporter": {
+          "type": "string",
+          "description": "Name or affiliation of the note contributor.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp string for the note.",
+          "minLength": 10,
+          "maxLength": 40
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the note was created."
+        }
+      },
+      "required": [
+        "id",
+        "reportId",
+        "text",
+        "reporter",
+        "timestamp",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/reports/{reportId}": {
+      "schema": {
+        "$ref": "#/entities/PersonReport"
+      },
+      "description": "Public community directory of lost and found person reports."
+    },
+    "/reports/{reportId}/notes/{noteId}": {
+      "schema": {
+        "$ref": "#/entities/SightingNote"
+      },
+      "description": "Subcollection of community sighting notes and updates for each report."
+    }
+  }
+}

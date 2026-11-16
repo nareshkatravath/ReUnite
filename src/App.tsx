@@ -6,14 +6,52 @@ import { ReportFormView } from './components/ReportFormView';
 import { SearchView } from './components/SearchView';
 import { PersonProfileView } from './components/PersonProfileView';
 import { ActiveScreen, PersonReport } from './types';
-import { getStoredReports, addReport, updateReportStatus } from './utils/storage';
-import { HeartHandshake, PhoneCall, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { getStoredReports, saveReports } from './utils/storage';
+import { createReportInDb, subscribeToReports } from './services/reportsDb';
+import { HeartHandshake, PhoneCall, ShieldCheck, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export default function App() {
   const [reports, setReports] = useState<PersonReport[]>(() => getStoredReports());
   const [activeScreen, setActiveScreen] = useState<ActiveScreen>({ type: 'landing' });
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ title: string; desc: string } | null>(null);
+  const [dbError, setDbError] = useState<string | null>(null);
+
+  // Real-time Firestore database sync
+  useEffect(() => {
+    const MIGRATION_KEY = 'reunite_app_firestore_migrated_v1';
+    let didCheckMigration = localStorage.getItem(MIGRATION_KEY) === 'true';
+
+    const unsubscribe = subscribeToReports(
+      async (remoteReports) => {
+        setDbError(null);
+
+        if (!didCheckMigration) {
+          didCheckMigration = true;
+          const preExistingLocal = getStoredReports();
+          const remoteIds = new Set(remoteReports.map((r) => r.id));
+          const unsynced = preExistingLocal.filter((r) => r.id && !remoteIds.has(r.id));
+          for (const localReport of unsynced) {
+            try {
+              await createReportInDb(localReport);
+            } catch (err) {
+              console.warn('Could not sync cached local report:', err);
+            }
+          }
+          localStorage.setItem(MIGRATION_KEY, 'true');
+        }
+
+        setReports(remoteReports);
+        saveReports(remoteReports);
+      },
+      (err) => {
+        console.error('Database sync error:', err);
+        setDbError('Unable to reach cloud database right now. Showing last synced records.');
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   // Sync hash routing
   useEffect(() => {
@@ -51,23 +89,29 @@ export default function App() {
     }
   };
 
-  const handleCreateReport = (newReport: PersonReport) => {
-    addReport(newReport);
-    setReports(getStoredReports());
-    
+  const handleCreateReport = async (newReport: PersonReport) => {
+    const savedReport = await createReportInDb(newReport);
+
     // Show celebratory toast
     setToastMessage({
-      title: `Report Logged: ${newReport.trackingCode}`,
-      desc: 'GPS pinpoint and details saved to community directory. Forward profile to WhatsApp groups.'
+      title: `Report Saved to Database: ${savedReport.trackingCode}`,
+      desc: 'GPS pinpoint and details updated in the cloud directory. Forward profile to WhatsApp groups.'
     });
     setTimeout(() => setToastMessage(null), 6000);
 
     // Navigate to profile
-    navigateTo({ type: 'profile', trackingCode: newReport.trackingCode });
+    navigateTo({ type: 'profile', trackingCode: savedReport.trackingCode });
   };
 
   const handleReportUpdated = (updatedReport: PersonReport) => {
-    setReports(getStoredReports());
+    setReports((prev) =>
+      prev.map((r) => (r.id === updatedReport.id ? { ...r, ...updatedReport } : r))
+    );
+    setToastMessage({
+      title: `Details Updated: ${updatedReport.trackingCode}`,
+      desc: 'All updated details have been saved in the database.'
+    });
+    setTimeout(() => setToastMessage(null), 4000);
   };
 
   // Find active profile if on profile screen
@@ -100,6 +144,16 @@ export default function App() {
             >
               ✕
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Database Sync Notice */}
+      {dbError && (
+        <div className="max-w-3xl mx-auto w-full px-4 pt-3">
+          <div className="bg-amber-50 text-amber-900 px-4 py-2.5 rounded-xl border border-amber-200 flex items-center gap-2 text-xs">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{dbError}</span>
           </div>
         </div>
       )}
